@@ -121,6 +121,9 @@ class DecoderBlock(nn.Module):
         h_up = pad2same(h_up, x[1])
         h_g = pad2same(h_g, x[1])
         gate = self.glob(h_g) if self.glob else 1.
+        # However, `self.attention(self.local(h_up + gate * x[1]))`, namely filter encoder feature first sometimes offer a better performance. 
+        # It might because the lack of coherence in spatial features caused by filtering precisely improves generalization ability through regularization.
+        # Here, we choose to filter after fusing mainly based on the AG itself is just designed to break the continuity by GCM, hence release more parameters focus on fusing. 
         x = self.local(self.pre_log(h_up + x[1]))
         att = self.attention(self.filtered_x_log(x * gate))
         out = x * (att + gate)
