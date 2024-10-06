@@ -1,9 +1,9 @@
-from typing import Callable, Dict
+from typing import Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import inspect
-from utils.losses import IOU_loss, contain_loss, dice_loss, diff_loss, keep_loss, lead_loss, simple_loss
+from utils.losses import IOU_loss, dice_loss, diff_loss, keep_loss, lead_loss, simple_loss
 from utils.utils import filter as filter_
 from utils.metrics import Accuracy, Dice, Recall, Iou, mIoU
 
@@ -13,10 +13,10 @@ class LossWrap:
         self.losses = losses
     
     def __call__(self, x, optimer):
-        def _closure(pre):
+        def _closure(pred):
             loss = {}
-            mask = pre['mask']
             optimer.zero_grad()
+            mask = pred['mask']
             loss_total = sum([v['loss'](mask, x.float(), **v['args']) * v.get('weight', 1) for _, v in self.losses.items()])
             loss['total'] = loss_total.item()
             loss_total.backward()
@@ -29,7 +29,7 @@ class DeepLossWrap(LossWrap):
         super(DeepLossWrap, self).__init__(losses)
 
     def __call__(self, x, optimer):
-        def _closure(pre):
+        def _closure(pre:dict[str, Union[torch.Tensor, list[torch.Tensor], tuple[torch.Tensor]]]):
             loss = {}
             mask = pre['mask']
             hidden = pre['hidden']
@@ -45,66 +45,7 @@ class DeepLossWrap(LossWrap):
             optimer.step()
             return loss
         return _closure
-
-class BaseModel(nn.Module):
-    ms = {
-        'Acc': Accuracy,
-        'Iou': Iou,
-        'F1': Dice,
-        'Recall': Recall,
-        'mIoU': mIoU,
-    }
-    def __init__(self, trace_time=False, as_layer=False):
-        super(BaseModel, self).__init__()
-        frame = inspect.currentframe().f_back
-        arg_names = inspect.getargvalues(frame).args
-        self._init_args = {name: frame.f_locals[name] for name in arg_names if name != 'self'}
-        self.pre = None
-        self.trace_time = trace_time
-        self.as_layer = as_layer
-
-    def get_init_args(self):
-        return self._init_args
     
-    def predict(self, x, *args, **kwargs):
-        ...
-
-    def forward(self, x, *args, **kwargs):
-        ...
-    
-    def backward(self, x, optimer, closure:LossWrap=None, clear_stored=True):
-        assert self.pre is not None, "Please call forward first"
-        if closure is None:
-            closure = wrap_bce(x, optimer)
-        else:
-            closure = closure(x, optimer)
-        pre = self.pre
-        if clear_stored:self.clear_pre()
-        with torch.enable_grad():
-            return closure(pre)
-    
-    def clear_pre(self):
-        self.pre = None
-    
-    def metrics(self, img, mask, with_filtered=True, metrics=None):
-        ms = metrics if metrics is not None else self.ms
-        pred = self.forward(img) if self.pre is None else self.pre['mask']
-        mask = mask.clone().detach()
-        metrics = {}
-        pred = pred.clone().detach()
-        pred[pred>=0.5]=1
-        pred[pred<0.5]=0
-        if with_filtered:filtered = torch.tensor(filter_(pred.squeeze().cpu().numpy()), device=pred.device).unsqueeze(0).unsqueeze(0)
-        for k, v in ms.items():
-            metrics[k] = v(pred, mask)
-            if with_filtered:metrics[f'F_{k}'] = v(filtered, mask)
-        return metrics
-    
-    def memo(self):
-        return """
-        BaseModel for segmentation.
-        """
-
 wrap_bce = LossWrap({
     'bce':{
         'loss':F.binary_cross_entropy_with_logits,
@@ -175,3 +116,69 @@ def wrap_nl(x, optimer):
         optimer.step()
         return loss
     return _closure
+
+
+class BaseModel(nn.Module):
+    ms = {
+        'Acc': Accuracy,
+        'Iou': Iou,
+        'F1': Dice,
+        'Recall': Recall,
+        'mIoU': mIoU,
+    }
+    def __init__(self, trace_time=False, as_layer=False):
+        super(BaseModel, self).__init__()
+        frame = inspect.currentframe().f_back
+        arg_names = inspect.getargvalues(frame).args
+        self._init_args = {name: frame.f_locals[name] for name in arg_names if name != 'self'}
+        self.pre = None
+        self.trace_time = trace_time
+        self.as_layer = as_layer
+
+    def __call__(self, *args: torch.Any, **kwds: torch.Any) -> torch.Any:
+        res = self._wrapped_call_impl(*args, **kwds)
+        if isinstance(res, torch.Tensor):
+            self.pre = (self.pre if isinstance(self.pre, dict) else {}) | {'mask': res}
+        else:
+            self.pre = res
+        return res
+
+    def get_init_args(self):
+        return self._init_args
+    
+    predict = ...
+
+    default_closure = wrap_bce
+
+    def backward(self, x, optimer, closure:LossWrap=None, clear_stored=True):
+        assert self.pre, "Please call forward first"
+        if closure is None:
+            closure = self.default_closure(x, optimer)
+        else:
+            closure = closure(x, optimer)
+        pre = self.pre
+        if clear_stored:self.clear_pre()
+        with torch.enable_grad():
+            return closure(pre)
+    
+    def clear_pre(self):
+        self.pre = None
+    
+    def metrics(self, img, mask, with_filtered=True, metrics=None):
+        ms = metrics if metrics is not None else self.ms
+        pred = self.__call__(img) if self.pre is None else self.pre['mask']
+        mask = mask.clone().detach()
+        metrics = {}
+        pred = pred.clone().detach()
+        pred[pred>=0.5]=1
+        pred[pred<0.5]=0
+        if with_filtered:filtered = torch.tensor(filter_(pred.squeeze().cpu().numpy()), device=pred.device).unsqueeze(0).unsqueeze(0)
+        for k, v in ms.items():
+            metrics[k] = v(pred, mask)
+            if with_filtered:metrics[f'F_{k}'] = v(filtered, mask)
+        return metrics
+    
+    def memo(self):
+        return """
+        BaseModel for segmentation.
+        """
