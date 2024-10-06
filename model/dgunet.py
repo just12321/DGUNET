@@ -269,9 +269,6 @@ class DGUnet(BaseModel):
 
     def forward(self, x):  
         y = self.out(self.net((x, ))[0])
-        self.pre = {
-            'mask': y,
-        }
         return y
 
     default_closure = wrap_iou
