@@ -14,9 +14,6 @@ from utils.utils import plot_surface
 from utils.losses import IOU_loss, dice_loss, focal_loss
 
 class EncoderBlock(nn.Module):
-    """
-    Keens to dig out the main regions, gradually dropping the grains.
-    """
     def __init__(self, in_channels, out_channels):
         super(EncoderBlock, self).__init__()
         self.trans = nn.Sequential(
@@ -41,6 +38,7 @@ class ScaleIt(nn.Module):
         return self.conv(self.conv(x))
 
 def wrapped_kl(x, y, reduction='none'):
+    # return F.kl_div(x.log(), (y >= 0.5).float(), reduction=reduction)
     return F.kl_div(F.log_softmax(x, dim=1), F.softmax(y, dim=1), reduction=reduction)
 
 class DecoderBlock(nn.Module):
@@ -231,10 +229,6 @@ class NLG(nn.Module):
         return fuse
 
 class Bottleneck(nn.Module):
-    """
-    Assume that the primary regions are already extracted, non-local network is used to in place of the full connection. 
-    reducing the parameters while filling the gaps.
-    """
     def __init__(self, in_channels, out_channels, hidden_dim, num_heads=1, use_nlg=True):
         super(Bottleneck, self).__init__()
 
@@ -279,8 +273,6 @@ class DGUnet(BaseModel):
             'mask': y,
         }
         return y
-    
-    def backward(self, x, optimer, closure=None, clear_stored=True):
-        default = wrap_iou
-        return super().backward(x, optimer, closure if not closure is None else default, clear_stored)
+
+    default_closure = wrap_iou
 
