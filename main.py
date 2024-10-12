@@ -17,7 +17,7 @@ from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
 from torchsummary import summary
 from albumentations import(
-    Compose, ShiftScaleRotate, ColorJitter, RandomCrop, Flip
+    Compose, ShiftScaleRotate, ColorJitter, RandomCrop, Flip, Resize
 )
 USE_DEFAULT_LOSS = None
 
@@ -85,6 +85,7 @@ def init():
     print_config(config)
 
     augumentator = Compose([
+            # Resize(config.height, config.width) """When the original resolution of the image is different from the training resolution, it is best to resize it first"""
             ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.2, rotate_limit=180, p=0.8),
             RandomCrop(width=config.width, height=config.height),
             ColorJitter(brightness=(0.8,1.2), contrast=(0.8,1.2), saturation=(0.8,1.2), hue=(-0.1,0.1), p=0.8),
